@@ -6,8 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.23.1", features = ['macros'] }
+tokio = { version = "1.23.1", features = ['macros', 'rt-multi-thread'] }
 tokio-util = "0.6.9"
+rust-ini = "0.18"
+getopts = "0.2"
+flexi_logger = "0.24"
+log = "0.4"
 [dependencies.serenity]
 default-features = false
 features = ['time', 'client', 'gateway', 'model', 'rustls_backend']
