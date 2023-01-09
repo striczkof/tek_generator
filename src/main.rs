@@ -1,14 +1,19 @@
 extern crate getopts;
 use getopts::Options;
 use ini::Ini;
-use log::{info, warn};
 use std::env;
 // Log shit goes here
+use std::io::Write;
+use flexi_logger::FlexiLoggerError::Log;
+use chrono::Local;
+use env_logger::Builder as LogBuilder;
+use log::LevelFilter;
+use log::{info, warn, error};
 // Discord stuff
 use serenity::{
     async_trait,
     client::{Client, Context, EventHandler},
-    model::{channel::Message, gateway::Ready, gateway::GatewayIntents},
+    model::{channel::Message, gateway::GatewayIntents, gateway::Ready},
 };
 use tokio::sync::mpsc;
 
@@ -29,7 +34,7 @@ impl EventHandler for Handler {
             // channel, so log to stdout when some error happens, with a
             // description of it.
             if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
-                println!("Error sending message: {:?}", why);
+                warn!("Error sending message: {:?}", why);
             }
         }
     }
@@ -41,10 +46,9 @@ impl EventHandler for Handler {
     //
     // In this case, just print what the current user's username is.
     async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        info!("{} is connected!", ready.user.name);
     }
 }
-
 
 // Global variables
 // Name of config file
@@ -54,10 +58,11 @@ const CONFIG_NAME: &str = "tek_generator";
 fn load_config() -> Option<Ini> {
     // Look for config file in same directory and /etc directory if target is a unix system, use .conf extension
     #[cfg(target_family = "unix")]
-        let conf_file = Ini::load_from_file(format!("/etc/{}.conf", CONFIG_NAME)).or_else(|_| Ini::load_from_file(format!("{}.conf", CONFIG_NAME)));
+    let conf_file = Ini::load_from_file(format!("/etc/{}.conf", CONFIG_NAME))
+        .or_else(|_| Ini::load_from_file(format!("{}.conf", CONFIG_NAME)));
     // Look for config file in same directory if target is not a unix system, use .ini extension
     #[cfg(not(target_family = "unix"))]
-        let mut conf = Ini::load_from_file(format!("{}.ini", CONFIG_NAME));
+    let mut conf = Ini::load_from_file(format!("{}.ini", CONFIG_NAME));
     // If config file exists, load it
     return if conf_file.is_ok() {
         info!("I found a config file!");
@@ -83,11 +88,19 @@ fn load_config() -> Option<Ini> {
 // Help menu for noobs
 fn print_help_usage(program: &str, opts: Options) {
     let brief = format!("Usage: {} [options]", program);
-    print!("{}", opts.usage(&brief));
+    println!("{}", opts.usage(&brief));
 }
 
-// DEMON MODE
+// ARK Tek Generator calculator function. Outputs seconds before generator runs out in double.
+// 1 ELEMENT IS EQUALS 18 HOURS, SUCCESS!
+fn calculate_tek_gen(range: f64, element: u32, element_shards: u32) -> f64 {
+    // Combine element first, we use element shards (= 0.01 element) for calculation
+    let total_element = (element * 100) + element_shards;
+    println!("Total element is {}", total_element as f64);
+    total_element as f64 * (648.0 / (1.0 + ((range - 1.0) * 0.33)))
+}
 
+// Main function
 #[tokio::main]
 async fn main() {
     // Get options if any
@@ -96,29 +109,54 @@ async fn main() {
     opts.optopt("t", "token", "Set the discord bot token", "TOKEN");
     opts.optflag("h", "help", "Print this help menu");
     let matches = match opts.parse(&args[1..]) {
-        Ok(m) => { m }
-        Err(f) => { panic!("{}", f.to_string()) }
+        Ok(m) => m,
+        Err(f) => {
+            panic!("{}", f.to_string())
+        }
     };
     if matches.opt_present("h") {
         print_help_usage(&args[0], opts);
         return;
     }
+    // Set up loggerd
+    LogBuilder::new()
+        .format(|buf, record| {
+            writeln!(buf,
+                     "{} [{}] - {}",
+                     Local::now().format("%Y-%m-%dT%H:%M:%S"),
+                     record.level(),
+                     record.args()
+            )
+        })
+        .filter(None, LevelFilter::Info)
+        .init();
     // Load config file
     let config = load_config().unwrap();
     // Set discord token if provided else use provided token from config file
     let token = if matches.opt_present("t") {
         matches.opt_str("t").unwrap()
     } else {
-        config.get_from(Some("discord"), "token").unwrap().to_string()
+        config
+            .get_from(Some("discord"), "token")
+            .unwrap()
+            .to_string()
     };
-    println!("Token is {}", token);
+    info!("Token is {}", token);
+    // Exits program if token is empty
+    if token.is_empty() {
+        error!("Token is empty! Please provide a token in the config file or as an argument.");
+        return;
+    }
     // Discord stuff here we go
     // Set intents, meant to be fine tuned later
-    let intents = GatewayIntents::all();
-    let mut client = Client::builder(&token, intents).event_handler(Handler).await.expect("Error creating client");
+    let intents = GatewayIntents::default();
+    let mut client = Client::builder(&token, intents)
+        .event_handler(Handler)
+        .await
+        .expect("Error creating client");
     // Start an auto sharded client
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
+    if let Err(why) = client.start_autosharded().await {
+        error!("Client error: {:?}", why);
     }
 }
 /*
